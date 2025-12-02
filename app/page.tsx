@@ -28,9 +28,45 @@ export default function SubmissionPage() {
   const [submissionState, setSubmissionState] = useState<SubmissionState>("idle")
   const [submittedData, setSubmittedData] = useState<SubmissionData | null>(null)
   const [errorMessage, setErrorMessage] = useState<string>("")
+  const [showManualIpInput, setShowManualIpInput] = useState<boolean>(false)
+  const [manualIp, setManualIp] = useState<string>("")
   const { toast } = useToast()
 
   const isFormValid = formData.name.trim() !== "" && formData.project.trim() !== ""
+
+  const fetchIpAddress = async (): Promise<string> => {
+    try {
+      const response = await fetch("https://api.ipify.org?format=json")
+      if (response.ok) {
+        const data = await response.json()
+        return data.ip
+      }
+    } catch (error) {
+      console.error("[v0] api.ipify.org failed:", error)
+    }
+
+    try {
+      const response = await fetch("https://api64.ipify.org?format=json")
+      if (response.ok) {
+        const data = await response.json()
+        return data.ip
+      }
+    } catch (error) {
+      console.error("[v0] api64.ipify.org failed:", error)
+    }
+
+    try {
+      const response = await fetch("https://checkip.amazonaws.com")
+      if (response.ok) {
+        const ip = await response.text()
+        return ip.trim()
+      }
+    } catch (error) {
+      console.error("[v0] checkip.amazonaws.com failed:", error)
+    }
+
+    throw new Error("IP_FETCH_FAILED")
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -40,22 +76,33 @@ export default function SubmissionPage() {
       return
     }
 
+    if (showManualIpInput && manualIp.trim() === "") {
+      setErrorMessage("Please enter your IP address.")
+      return
+    }
+
     setSubmissionState("loading")
     setErrorMessage("")
 
     try {
-      // Step 1: Fetch user's IP address
-      const ipResponse = await fetch("https://api.ipify.org?format=json")
-      if (!ipResponse.ok) {
-        throw new Error("IP_FETCH_FAILED")
+      let ipAddress: string
+      if (showManualIpInput) {
+        ipAddress = manualIp.trim()
+      } else {
+        try {
+          ipAddress = await fetchIpAddress()
+        } catch (error) {
+          setShowManualIpInput(true)
+          setSubmissionState("idle")
+          setErrorMessage(
+            "We couldn't auto-detect your IP address. Please visit https://whatismyipaddress.com and paste your IPv4 address below.",
+          )
+          return
+        }
       }
-      const ipData = await ipResponse.json()
-      const ipAddress = ipData.ip
 
-      // Step 2: Generate timestamp
       const timestamp = new Date().toLocaleString()
 
-      // Step 3: Create payload
       const payload = {
         name: formData.name.trim(),
         project: formData.project.trim(),
@@ -63,7 +110,6 @@ export default function SubmissionPage() {
         timestamp,
       }
 
-      // Step 4: Send to Power Automate webhook
       const webhookUrl =
         "https://defaultb71ff3f628164ca8a9b938f820f91a.d1.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/a8e6b54ac7784673918ad119ba193214/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=fvHkWvDqzklXFjaJDLhvGVJmdg1t0hgJRYoc7HszP04"
 
@@ -79,7 +125,6 @@ export default function SubmissionPage() {
         throw new Error("WEBHOOK_FAILED")
       }
 
-      // Step 5: Show success state
       setSubmittedData(payload)
       setSubmissionState("success")
     } catch (error) {
@@ -87,9 +132,7 @@ export default function SubmissionPage() {
       setSubmissionState("error")
 
       if (error instanceof Error) {
-        if (error.message === "IP_FETCH_FAILED") {
-          setErrorMessage("Couldn't detect your IP address. Please check your connection and try again.")
-        } else if (error.message === "WEBHOOK_FAILED") {
+        if (error.message === "WEBHOOK_FAILED") {
           setErrorMessage("Failed to send to Teams. Please try again or contact support.")
         } else {
           setErrorMessage("Something went wrong. Please try again.")
@@ -129,6 +172,8 @@ Timestamp: ${submittedData.timestamp}`
     setSubmittedData(null)
     setSubmissionState("idle")
     setErrorMessage("")
+    setShowManualIpInput(false)
+    setManualIp("")
   }
 
   return (
@@ -136,7 +181,6 @@ Timestamp: ${submittedData.timestamp}`
       <div className="min-h-screen flex items-center justify-center p-4 bg-[#0f1822] dark:bg-[#0f1822]">
         <div className="w-full max-w-md">
           {submissionState === "success" && submittedData ? (
-            // Success View
             <Card className="shadow-xl border-0 animate-in fade-in slide-in-from-bottom-4 duration-500 bg-white dark:bg-[#1a2332]">
               <CardHeader className="text-center pb-4">
                 <div className="mx-auto mb-4 w-16 h-16 bg-[#45b000]/10 dark:bg-[#45b000]/20 rounded-full flex items-center justify-center">
@@ -189,7 +233,6 @@ Timestamp: ${submittedData.timestamp}`
               </CardContent>
             </Card>
           ) : (
-            // Form View
             <Card className="shadow-xl border-0 bg-white dark:bg-[#1a2332]">
               <CardHeader className="text-center">
                 <CardTitle className="text-3xl font-bold bg-gradient-to-r from-[#c90d7e] to-[#850064] bg-clip-text text-transparent">
@@ -231,6 +274,23 @@ Timestamp: ${submittedData.timestamp}`
                         disabled={submissionState === "loading"}
                       />
                     </div>
+
+                    {showManualIpInput && (
+                      <div className="space-y-2">
+                        <Label htmlFor="manualIp" className="text-sm font-medium text-[#0f1822] dark:text-white">
+                          Your IP Address
+                        </Label>
+                        <Input
+                          id="manualIp"
+                          type="text"
+                          placeholder="e.g., 192.168.1.1"
+                          value={manualIp}
+                          onChange={(e) => setManualIp(e.target.value)}
+                          className="h-11 border-[#dcdde1] focus:border-[#c90d7e] focus:ring-[#c90d7e] dark:border-[#dcdde1]/30 dark:bg-[#0f1822] dark:text-white placeholder:text-[#dcdde1]/60"
+                          disabled={submissionState === "loading"}
+                        />
+                      </div>
+                    )}
                   </div>
 
                   {errorMessage && (
@@ -250,7 +310,7 @@ Timestamp: ${submittedData.timestamp}`
                         Submitting...
                       </>
                     ) : (
-                      "Submit"
+                      "Submit IP Address"
                     )}
                   </Button>
                 </form>
